@@ -52,19 +52,28 @@ are not carried over: pick them again under Central.
 
 ## Install / update from GitHub
 
-The source lives at <https://github.com/LuckyBricks/magpie-central-cli>. You can
-install and update the plugin straight from there, no package build needed:
+The source lives at <https://github.com/luckyBricks/magpie-central-cli>. Magpie
+can install the plugin straight from GitHub, with no package build or manual
+download:
 
 ```sh
-git clone https://github.com/LuckyBricks/magpie-central-cli.git
-magpie plugin add ./magpie-central-cli
+magpie plugin add luckyBricks/magpie-central-cli
 ```
 
-To update later, pull the latest version and restart Magpie:
+You can also add it in Magpie's settings: **插件 → 添加插件**, and enter
+`luckyBricks/magpie-central-cli` (or `github:luckyBricks/magpie-central-cli#<tag>`
+to pin a branch or tag; without `#ref` the default branch is used).
+
+To update, run:
 
 ```sh
-git -C magpie-central-cli pull
+magpie plugin update
 ```
+
+In the app, a plugin with a new version shows a small dot; open **已安装** and
+click the update action. Magpie compares the commit the branch or tag points to
+with the installed one, so a plugin pinned to a specific commit never shows
+updates. Installing or updating restarts the plugin host.
 
 ## Install on another computer
 
