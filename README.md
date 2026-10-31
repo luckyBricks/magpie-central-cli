@@ -49,7 +49,7 @@ administrator". Results are cached for 30 s.
 Build the package once (any OS with npm):
 
 ```sh
-npm pack --pack-destination dist     # or: npm run pack  → dist/magpie-central-cli-<version>.tgz
+npm run pack     # → dist/magpie-central-cli-<version>.tgz (creates dist/ first)
 ```
 
 Move the `.tgz` to the target machine and unpack it into any folder. The
