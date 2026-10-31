@@ -104,7 +104,11 @@ central proxy (adds auth, forwards to JetBrains AI Platform).
    allows just one) with an `auth` hook naming the single provider `central`,
    and the plugin calls
    `client.auth.set` with the dummy key `wire-proxy` at load so the provider is
-   already "signed in" and the user never logs in.
+   already "signed in" and the user never logs in. The ready-state `methods` is
+   empty (verified in Magpie: the provider still lists, shows signed in, and
+   `magpie plugin login central` says there is nothing to sign in to), so no
+   login button is offered. Only the not-ready state keeps one method, whose
+   label says what to do and whose `authorize` re-checks Central.
 
 9. **Magpie exposes only the models the user picked.** The plugin hands Magpie
    every listed model, but `magpie providers` shows "N exposed of M" (e.g.

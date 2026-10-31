@@ -50,7 +50,7 @@ export const central = async (input, options = {}) => {
       provider: PROVIDER_ID,
       icon: ICON,
       // Never prompted for in practice: the sign-in above is automatic.
-      methods: [{ type: "api", label: "Local Central CLI proxy (no key needed)" }],
+      methods: [],
       // No baseURL here: it differs per route and lives on each model's `api`.
       loader: async () => ({ apiKey: DUMMY_API_KEY }),
       // Central's own allowance (credits used / limit, refill period). Magpie

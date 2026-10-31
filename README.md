@@ -65,14 +65,14 @@ archive contains a `package/` directory, which is the plugin.
 macOS / Linux:
 
 ```sh
-mkdir magpie-central-cli && tar -xzf magpie-central-cli-0.4.0.tgz -C magpie-central-cli
+mkdir magpie-central-cli && tar -xzf magpie-central-cli-0.4.1.tgz -C magpie-central-cli
 magpie plugin add ./magpie-central-cli/package
 ```
 
 Windows (PowerShell; `tar` ships with Windows 10 1803+):
 
 ```powershell
-mkdir magpie-central-cli; tar -xzf magpie-central-cli-0.4.0.tgz -C magpie-central-cli
+mkdir magpie-central-cli; tar -xzf magpie-central-cli-0.4.1.tgz -C magpie-central-cli
 magpie plugin add .\magpie-central-cli\package
 ```
 
