@@ -2,7 +2,6 @@
 
 Use the models behind a local JetBrains Central CLI proxy in Magpie
 (one provider, **Central**, serving the Anthropic, OpenAI and Vertex (Gemini) models of your Central login).
-Design notes: [SPEC.md](SPEC.md).
 
 The plugin is plain ES modules with **no dependencies and no build step**, and
 contains no absolute paths, usernames or credentials. It works on macOS, Linux
@@ -51,6 +50,22 @@ Earlier versions showed three providers (`central-anthropic`, `central-openai`,
 sign-ins are removed automatically on load, but models you picked under them
 are not carried over: pick them again under Central.
 
+## Install / update from GitHub
+
+The source lives at <https://github.com/LuckyBricks/magpie-central-cli>. You can
+install and update the plugin straight from there, no package build needed:
+
+```sh
+git clone https://github.com/LuckyBricks/magpie-central-cli.git
+magpie plugin add ./magpie-central-cli
+```
+
+To update later, pull the latest version and restart Magpie:
+
+```sh
+git -C magpie-central-cli pull
+```
+
 ## Install on another computer
 
 Build the package once (any OS with npm):
@@ -91,7 +106,7 @@ magpie provider test central          # the built-in probe may 404 for the Gemin
 Models of all three vendors are listed live through the proxy into the one Central list (each model keeps its own SDK and URL; an id served by two vendors shows the later one as `<route>/<id>`). The plugin hides
 nothing; Magpie only shows the ones you pick: `magpie provider models central`
 lists them, `+<model>` exposes one. The list refreshes with Magpie's own model
-refresh. Options (see SPEC.md):
+refresh. Options:
 
 ```sh
 magpie plugin options central-cli '{"exclude":["-eap$"],"models":{"vertex":["gemini-3.5-flash"]}}'
@@ -108,7 +123,7 @@ On PowerShell quote the JSON as `'{\"exclude\":[\"-eap$\"]}'` (or use a here-str
 | Providers show "需要运行登录 central-cli" | `central login`, start the proxy, then sign in again. `central status` should show it running. |
 | `cannot read …config.json` in the Magpie log | Central never ran on this user account, or `CENTRAL_HOME`/`HOME`/`USERPROFILE` differ between the shell that started Central and the one that started Magpie. |
 | `proxy not reachable on 127.0.0.1:<port>` | Proxy stopped, or Central uses another port: set `WIRE_PROXY_PORT` the same for Magpie, or fix `proxy_port`. |
-| `403 unknown agent blocked` | Your organisation's allow-list must permit `claude-code`, `codex`, `gemini-cli` (see SPEC.md). |
+| `403 unknown agent blocked` | Your organisation's allow-list must permit `claude-code`, `codex`, `gemini-cli`. |
 | Magpie on one machine, Central on another | Not supported: the proxy only listens on 127.0.0.1. |
 
 ## Develop
