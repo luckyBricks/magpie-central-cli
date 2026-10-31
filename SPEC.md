@@ -1,8 +1,8 @@
 # magpie-central-cli — Spec
 
 A Magpie plugin that exposes the models served by a **locally running JetBrains
-Central CLI proxy** (`central`) as three Magpie providers: Anthropic, OpenAI and
-Vertex. The plugin holds no JetBrains credentials; the proxy injects them.
+Central CLI proxy** (`central`) as one Magpie provider, **Central**, spanning the
+Anthropic, OpenAI and Vertex routes. The plugin holds no JetBrains credentials; the proxy injects them.
 
 ## Goals / non-goals
 
@@ -16,11 +16,11 @@ Vertex. The plugin holds no JetBrains credentials; the proxy injects them.
 Magpie provider → `http://127.0.0.1:{port}/wire/{secret}/{agent}/{route}/…` →
 central proxy (adds auth, forwards to JetBrains AI Platform).
 
-| Provider id | `npm` (AI SDK) | Base URL tail | Borrowed `{agent}` | SDK appends |
+| Route | `npm` (AI SDK) | Base URL tail | Borrowed `{agent}` | SDK appends |
 |---|---|---|---|---|
-| `central-anthropic` | `@ai-sdk/anthropic` | `/anthropic/v1` | `claude-code` | `/messages` |
-| `central-openai` | `@ai-sdk/openai` | `/openai/v1` | `codex` | `/responses` |
-| `central-vertex` | `@ai-sdk/google` | `/vertex/v1beta1/projects/wire-project/locations/wire-location/publishers/google` | `gemini-cli` | `/models/<m>:streamGenerateContent` |
+| `anthropic` | `@ai-sdk/anthropic` | `/anthropic/v1` | `claude-code` | `/messages` |
+| `openai` | `@ai-sdk/openai` | `/openai/v1` | `codex` | `/responses` |
+| `vertex` | `@ai-sdk/google` | `/vertex/v1beta1/projects/wire-project/locations/wire-location/publishers/google` | `gemini-cli` | `/models/<m>:streamGenerateContent` |
 
 `apiKey` is the dummy `wire-proxy` (the proxy strips and replaces it).
 
@@ -99,9 +99,10 @@ central proxy (adds auth, forwards to JetBrains AI Platform).
 
 8. **Providers are discovered through `auth` hooks, not `config`.** Magpie lists
    a plugin's providers from `hooks.auth.provider`; a `config`-only plugin loads
-   but `magpie providers` stays empty. Each route is therefore its own exported
-   plugin function (Magpie loads every exported function; a default
-   `{id, server}` allows just one) with an `auth` hook, and the plugin calls
+   but `magpie providers` stays empty. The plugin is therefore one exported
+   function (Magpie loads every exported function; a default `{id, server}`
+   allows just one) with an `auth` hook naming the single provider `central`,
+   and the plugin calls
    `client.auth.set` with the dummy key `wire-proxy` at load so the provider is
    already "signed in" and the user never logs in.
 
@@ -138,6 +139,17 @@ central proxy (adds auth, forwards to JetBrains AI Platform).
    `resetsAt` is sent in milliseconds; the docs do not say whether seconds or
    milliseconds are expected there (they accept both for `until`).
 
+12. **One provider, three SDKs.** Versions up to 0.3 registered one provider per
+   route (`central-anthropic`/`-openai`/`-vertex`); since 0.4 there is a single
+   provider `central` (display name "Central"). The route's AI SDK and base URL
+   live on each model (`api: {npm, url}` in the `provider.models` result,
+   `provider: {npm, api}` in the config skeleton), so the auth `loader` returns
+   only the dummy `apiKey`, no `baseURL`. Model keys are the plain upstream id;
+   if two routes serve the same id, the later one is `<route>/<id>` (its `api.id`
+   stays the real id). The old `central-*` sign-ins are removed on load. **This
+   relies on Magpie honouring per-model `api.npm`/`api.url` (as OpenCode does);
+   chatting through each vendor from the UI is still to be confirmed.**
+
 ## Plugin options
 
 ```jsonc
@@ -154,14 +166,14 @@ central proxy (adds auth, forwards to JetBrains AI Platform).
 
 ## Verified vs. unverified
 
-- Verified in real Magpie (CLI, `magpie provider test`): `central-anthropic` ✓,
-  `central-openai` ✓. `central-vertex` fails the built-in probe (Magpie POSTs to
+- Verified in real Magpie (CLI, `magpie provider test`): provider `central-anthropic` ✓,
+  `central-openai` ✓ (before the 0.4 merge into one provider). The Vertex route fails the built-in probe (Magpie POSTs to
   the base URL for `@ai-sdk/google`, a Code Assist style check → 404), but a
   hand-made Gemini request through the proxy succeeds (see below); chatting from
   the Magpie UI is still to be confirmed.
 - Verified (workspace session, local proxy): Anthropic `/messages` → 200; OpenAI
   `/responses` → 200; unknown agent → 403; live listing → 17 Anthropic, 38 OpenAI
-  and 12 Vertex models (via `buildProviders`). Of the 12 Vertex models, 9 answer
+  and 12 Vertex models (via `resolveAllModels`). Of the 12 Vertex models, 9 answer
   `generateContent` (200); the 3 `*-early-exp*` ones return 404. Unit tests
   (`bun test`) cover pagination, fallback, exclude, overrides, Vertex listing and
   the data-dir fallback.

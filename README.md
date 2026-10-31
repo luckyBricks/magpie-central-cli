@@ -1,7 +1,7 @@
 # magpie-central-cli
 
 Use the models behind a local JetBrains Central CLI proxy in Magpie
-(three providers: `central-anthropic`, `central-openai`, `central-vertex`).
+(one provider, **Central**, serving the Anthropic, OpenAI and Vertex (Gemini) models of your Central login).
 Design notes: [SPEC.md](SPEC.md).
 
 The plugin is plain ES modules with **no dependencies and no build step**, and
@@ -29,11 +29,11 @@ plugin folder is safe to copy anywhere; **do not** copy `~/.jetbrains-central`.
 
 ## Quota
 
-Each provider reports Central's allowance to Magpie through its `auth.usage`
+The Central provider reports your allowance to Magpie through its `auth.usage`
 hook: credits used / limit, percent, and when the period refills (shown on the
-provider's account card, in `magpie quota` and `GET /v1/magpie/quotas`). All
-three providers show the same figure, since it belongs to your Central login,
-not to an API key. It is the data behind `central quota`.
+provider's account card, in `magpie quota` and `GET /v1/magpie/quotas`). It
+belongs to your Central login, not to an API key, and is the data behind
+`central quota`.
 
 The plugin gets it by running `central quota --json`, so the **`central` binary
 must be on the machine**. It is looked up in `CENTRAL_BIN`, then `PATH`, then
@@ -43,6 +43,13 @@ binary is missing or the login expired, the card shows the reason instead of
 numbers (e.g. "central CLI not found; install it or set CENTRAL_BIN").
 Workspace-managed limits you cannot query show "Managed by your Central Server
 administrator". Results are cached for 30 s.
+
+## Upgrading from 0.3 or older
+
+Earlier versions showed three providers (`central-anthropic`, `central-openai`,
+`central-vertex`). They are now one provider, `central`. The old providers'
+sign-ins are removed automatically on load, but models you picked under them
+are not carried over: pick them again under Central.
 
 ## Install on another computer
 
@@ -58,14 +65,14 @@ archive contains a `package/` directory, which is the plugin.
 macOS / Linux:
 
 ```sh
-mkdir magpie-central-cli && tar -xzf magpie-central-cli-0.3.0.tgz -C magpie-central-cli
+mkdir magpie-central-cli && tar -xzf magpie-central-cli-0.4.0.tgz -C magpie-central-cli
 magpie plugin add ./magpie-central-cli/package
 ```
 
 Windows (PowerShell; `tar` ships with Windows 10 1803+):
 
 ```powershell
-mkdir magpie-central-cli; tar -xzf magpie-central-cli-0.3.0.tgz -C magpie-central-cli
+mkdir magpie-central-cli; tar -xzf magpie-central-cli-0.4.0.tgz -C magpie-central-cli
 magpie plugin add .\magpie-central-cli\package
 ```
 
@@ -78,13 +85,11 @@ Then check:
 
 ```sh
 magpie plugin --json                  # load errors, if any
-magpie provider test central-anthropic
-magpie provider test central-openai
-magpie provider test central-vertex   # the built-in probe 404s for Google-style providers; chat in Magpie instead
+magpie provider test central          # the built-in probe may 404 for the Gemini models; chat in Magpie instead
 ```
 
-Models are listed live through the proxy on all three routes. The plugin hides
-nothing; Magpie only shows the ones you pick: `magpie provider models central-vertex`
+Models of all three vendors are listed live through the proxy into the one Central list (each model keeps its own SDK and URL; an id served by two vendors shows the later one as `<route>/<id>`). The plugin hides
+nothing; Magpie only shows the ones you pick: `magpie provider models central`
 lists them, `+<model>` exposes one. The list refreshes with Magpie's own model
 refresh. Options (see SPEC.md):
 

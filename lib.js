@@ -173,17 +173,39 @@ export async function resolveModels(proxy, route, options = {}, fetchImpl = fetc
   return modelMap(route, undefined)
 }
 
+export const PROVIDER_ID = "central"
+export const PROVIDER_NAME = "Central"
+// Provider ids of earlier versions (one provider per route); signed out on load.
+export const LEGACY_PROVIDER_IDS = Object.keys(ROUTES).map((r) => `central-${r}`)
+
+// All enabled routes' models as one flat map, since Magpie shows a single
+// "Central" provider. Each entry remembers its route (it picks the SDK and URL).
+// Keys are the plain model id; on a clash between routes the later one is
+// namespaced `<route>/<id>` so nothing is dropped.
+export async function resolveAllModels(proxy, options = {}, fetchImpl = fetch) {
+  const routes = Object.keys(ROUTES).filter((r) => !options.routes || options.routes.includes(r))
+  const perRoute = await Promise.all(routes.map(async (route) => [route, await resolveModels(proxy, route, options, fetchImpl)]))
+  const out = {}
+  for (const [route, models] of perRoute) {
+    for (const [id, m] of Object.entries(models)) {
+      const key = id in out ? `${route}/${id}` : id
+      out[key] = { ...m, id, route }
+    }
+  }
+  return out
+}
+
 // A model as Magpie's provider list holds it (what a `provider.models` hook must
 // return): the config-style entry {name, tool_call, ...} widened to the full shape.
-// `base` is the entry Magpie already has for the id (user config wins).
-export function fullModel(route, proxy, id, m = {}, base) {
+// `base` is the entry Magpie already has for the key (user config wins).
+export function fullModel(proxy, key, m, base) {
   if (base) return base
   const none = { text: false, image: false, audio: false, video: false, pdf: false }
   return {
-    id,
-    providerID: `central-${route}`,
-    name: m.name ?? id,
-    api: { id, url: baseURL(proxy, route), npm: ROUTES[route].npm },
+    id: key,
+    providerID: PROVIDER_ID,
+    name: m.name ?? m.id,
+    api: { id: m.id, url: baseURL(proxy, m.route), npm: ROUTES[m.route].npm },
     status: "active",
     headers: {},
     options: {},
@@ -203,31 +225,32 @@ export function fullModel(route, proxy, id, m = {}, base) {
   }
 }
 
-// Body of the `provider.models` hook: the route's models as Magpie wants them.
+// Body of the `provider.models` hook: every route's models as Magpie wants them.
 // Throws when the proxy is not ready so Magpie keeps its last list and shows why.
-export async function listProviderModels(route, provider, options = {}, dir = centralDir(), fetchImpl = fetch) {
+export async function listProviderModels(provider, options = {}, dir = centralDir(), fetchImpl = fetch) {
   const status = await centralStatus(dir, fetchImpl)
   if (!status.ready) throw new Error(status.reason)
   const given = provider?.models ?? {}
-  const models = await resolveModels(status.proxy, route, options, fetchImpl)
-  return Object.fromEntries(Object.entries(models).map(([id, m]) => [id, fullModel(route, status.proxy, id, m, given[id])]))
+  const models = await resolveAllModels(status.proxy, options, fetchImpl)
+  return Object.fromEntries(Object.entries(models).map(([key, m]) => [key, fullModel(status.proxy, key, m, given[key])]))
 }
 
-export async function buildProviders(proxy, options = {}, fetchImpl = fetch) {
-  const routes = Object.entries(ROUTES).filter(([route]) => !options.routes || options.routes.includes(route))
-  const entries = await Promise.all(
-    routes.map(async ([route, r]) => [
-      `central-${route}`,
-      {
-        name: `Central · ${route[0].toUpperCase()}${route.slice(1)}`,
-        npm: r.npm,
-        api: baseURL(proxy, route),
-        options: { apiKey: DUMMY_API_KEY },
-        models: await resolveModels(proxy, route, options, fetchImpl),
-      },
-    ]),
-  )
-  return Object.fromEntries(entries)
+// The provider skeleton for Magpie's config: static fallback models only. The
+// SDK and URL are per model (`provider`), because one provider spans three
+// vendors; the provider-level npm is only a default.
+export async function buildProvider(proxy, options = {}, fetchImpl = fetch) {
+  const models = await resolveAllModels(proxy, options, fetchImpl)
+  return {
+    name: PROVIDER_NAME,
+    npm: ROUTES.anthropic.npm,
+    options: { apiKey: DUMMY_API_KEY },
+    models: Object.fromEntries(
+      Object.entries(models).map(([key, { route, id, ...m }]) => [
+        key,
+        { ...m, ...(key !== id && { id }), provider: { npm: ROUTES[route].npm, api: baseURL(proxy, route) } },
+      ]),
+    ),
+  }
 }
 
 // Best-effort check for the Magpie UI: is the proxy reachable? Any HTTP

@@ -2,8 +2,8 @@ import { expect, test } from "bun:test"
 import { mkdtemp, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { centralBinaries, fetchQuota, toUsage, usageFor, resetQuotaCache, listProviderModels, applyExclude, baseURL, buildProviders, centralDir, userHome, centralStatus, NEED_CENTRAL, fetchModels, modelMap, readProxy, CentralNotReadyError } from "../lib.js"
-import { ICONS } from "../icons.js"
+import { centralBinaries, fetchQuota, toUsage, usageFor, resetQuotaCache, listProviderModels, applyExclude, baseURL, buildProvider, resolveAllModels, PROVIDER_ID, LEGACY_PROVIDER_IDS, centralDir, userHome, centralStatus, NEED_CENTRAL, fetchModels, modelMap, readProxy, CentralNotReadyError } from "../lib.js"
+import { ICON } from "../icons.js"
 
 const proxy = { port: 19516, secret: "abc123" }
 
@@ -16,25 +16,42 @@ test("base URLs match the proxy URL scheme", () => {
 const down = async () => { throw new Error("down") }
 const json = (body, ok = true) => async () => ({ ok, json: async () => body })
 
-test("falls back to static models when /models fails; dummy key is set", async () => {
-  const p = await buildProviders(proxy, {}, down)
-  expect(Object.keys(p)).toEqual(["central-anthropic", "central-openai", "central-vertex"])
-  expect(p["central-openai"].options.apiKey).toBe("wire-proxy")
-  expect(p["central-anthropic"].npm).toBe("@ai-sdk/anthropic")
-  expect(Object.keys(p["central-anthropic"].models).length).toBeGreaterThan(0)
+test("one Central provider; falls back to static models per route when /models fails", async () => {
+  const p = await buildProvider(proxy, {}, down)
+  expect(p.name).toBe("Central")
+  expect(p.options.apiKey).toBe("wire-proxy")
+  expect(p.models["claude-sonnet-5-5"].provider).toEqual({ npm: "@ai-sdk/anthropic", api: baseURL(proxy, "anthropic") })
+  expect(p.models["gpt-5.3-codex"].provider.npm).toBe("@ai-sdk/openai")
+  expect(p.models["gemini-3.5-flash"].provider).toEqual({ npm: "@ai-sdk/google", api: baseURL(proxy, "vertex") })
 })
 
-test("uses live models and shows everything by default (no filtering)", async () => {
-  const f = json({ data: [{ id: "claude-x-eap", display_name: "X EAP" }, { id: "text-embedding-3" }] })
-  const p = await buildProviders(proxy, { routes: ["anthropic"] }, f)
-  expect(Object.keys(p["central-anthropic"].models)).toEqual(["claude-x-eap", "text-embedding-3"])
-  expect(p["central-anthropic"].models["claude-x-eap"].name).toBe("X EAP")
+test("live models from all routes are merged, one SDK/URL per model, nothing filtered by default", async () => {
+  const f = async (url) => {
+    const u = String(url)
+    if (u.includes("/anthropic/")) return { ok: true, json: async () => ({ data: [{ id: "claude-x-eap", display_name: "X EAP" }] }) }
+    if (u.includes("/openai/")) return { ok: true, json: async () => ({ data: [{ id: "text-embedding-3" }] }) }
+    return { ok: true, json: async () => ({ publisherModels: [{ versionId: "gem-1" }] }) }
+  }
+  const m = await resolveAllModels(proxy, {}, f)
+  expect(Object.keys(m)).toEqual(["claude-x-eap", "text-embedding-3", "gem-1"])
+  expect(m["claude-x-eap"]).toMatchObject({ name: "X EAP", route: "anthropic" })
+  expect(m["gem-1"].route).toBe("vertex")
+})
+
+test("an id served by two routes is kept under both, the later one namespaced", async () => {
+  const f = async () => ({ ok: true, json: async () => ({ data: [{ id: "same" }], publisherModels: [{ versionId: "same" }] }) })
+  const m = await resolveAllModels(proxy, {}, f)
+  expect(Object.keys(m)).toEqual(["same", "openai/same", "vertex/same"])
+  expect(m["vertex/same"]).toMatchObject({ id: "same", route: "vertex" })
+  const p = await buildProvider(proxy, {}, f)
+  expect(p.models["vertex/same"].id).toBe("same")
+  expect("id" in p.models.same).toBe(false)
 })
 
 test("exclude option drops matching ids", async () => {
   const f = json({ data: [{ id: "a-eap" }, { id: "b" }] })
-  const p = await buildProviders(proxy, { routes: ["anthropic"], exclude: ["-eap$"] }, f)
-  expect(Object.keys(p["central-anthropic"].models)).toEqual(["b"])
+  const m = await resolveAllModels(proxy, { routes: ["anthropic"], exclude: ["-eap$"] }, f)
+  expect(Object.keys(m)).toEqual(["b"])
   expect(applyExclude([{ id: "q" }])).toEqual([{ id: "q" }])
 })
 
@@ -65,9 +82,10 @@ test("vertex lists via the publisher endpoint and follows nextPageToken", async 
 test("overrides win; dynamic:false skips the network; routes filters", async () => {
   let calls = 0
   const f = async () => { calls++; throw new Error("no") }
-  const p = await buildProviders(proxy, { routes: ["openai", "anthropic"], models: { openai: ["x"] }, dynamic: false }, f)
-  expect(Object.keys(p)).toEqual(["central-anthropic", "central-openai"].filter((k) => k in p))
-  expect(Object.keys(p["central-openai"].models)).toEqual(["x"])
+  const m = await resolveAllModels(proxy, { routes: ["openai", "anthropic"], models: { openai: ["x"] }, dynamic: false }, f)
+  expect(Object.values(m).map((e) => e.route)).toContain("anthropic")
+  expect(Object.values(m).some((e) => e.route === "vertex")).toBe(false)
+  expect(m.x).toMatchObject({ route: "openai" })
   expect(calls).toBe(0)
   expect(modelMap("openai", { y: { name: "Y" } })).toEqual({ y: { name: "Y" } })
 })
@@ -94,13 +112,9 @@ test("readProxy reads config.json and fails clearly when not ready", async () =>
   expect(await readProxy(dir)).toMatchObject({ port: 1234, secret: "s" })
 })
 
-test("each route has its own data:image icon Magpie accepts", () => {
-  expect(Object.keys(ICONS)).toEqual(["anthropic", "openai", "vertex"])
-  for (const v of Object.values(ICONS)) {
-    expect(v).toMatch(/^data:image\//)
-    expect(v.length).toBeLessThan(3 << 19)
-  }
-  expect(new Set(Object.values(ICONS)).size).toBe(3)
+test("the provider icon is a data:image Magpie accepts", () => {
+  expect(ICON).toMatch(/^data:image\//)
+  expect(ICON.length).toBeLessThan(3 << 19)
 })
 
 test("centralStatus: not ready without config or without a live proxy", async () => {
@@ -121,16 +135,26 @@ test("package.json carries the plugin's own icon as a data:image URI", async () 
   expect(pkg.magpie.icon.length).toBeLessThan(3 << 19)
 })
 
-test("provider.models hook lists live models in Magpie's full shape", async () => {
+test("provider.models hook lists live models of every route in Magpie's full shape", async () => {
   const dir = await mkdtemp(join(tmpdir(), "central-"))
   await writeFile(join(dir, "config.json"), JSON.stringify({ proxy_port: 19516, proxy_secret: "abc123" }))
-  const f = async (url) => (String(url).includes("/models") ? { ok: true, json: async () => ({ data: [{ id: "m1", display_name: "M One" }] }) } : { ok: true })
+  const f = async (url) => {
+    const u = String(url)
+    if (!u.includes("/models")) return { ok: true }
+    if (u.includes("/anthropic/")) return { ok: true, json: async () => ({ data: [{ id: "m1", display_name: "M One" }] }) }
+    if (u.includes("/openai/")) return { ok: true, json: async () => ({ data: [{ id: "g1" }] }) }
+    return { ok: true, json: async () => ({ publisherModels: [{ versionId: "v1" }] }) }
+  }
   const kept = { id: "m1", name: "user" }
-  const out = await listProviderModels("anthropic", { models: { m1: kept } }, {}, dir, f)
+  const out = await listProviderModels({ models: { m1: kept } }, {}, dir, f)
   expect(out.m1).toBe(kept)
-  const fresh = await listProviderModels("anthropic", { models: {} }, {}, dir, f)
+  const fresh = await listProviderModels({ models: {} }, {}, dir, f)
+  expect(Object.keys(fresh)).toEqual(["m1", "g1", "v1"])
   expect(fresh.m1.name).toBe("M One")
-  expect(fresh.m1.api.url).toBe("http://127.0.0.1:19516/wire/abc123/claude-code/anthropic/v1")
+  expect(fresh.m1.providerID).toBe("central")
+  expect(fresh.m1.api).toMatchObject({ id: "m1", npm: "@ai-sdk/anthropic", url: "http://127.0.0.1:19516/wire/abc123/claude-code/anthropic/v1" })
+  expect(fresh.g1.api).toMatchObject({ npm: "@ai-sdk/openai", url: "http://127.0.0.1:19516/wire/abc123/codex/openai/v1" })
+  expect(fresh.v1.api.npm).toBe("@ai-sdk/google")
   expect(fresh.m1.capabilities.toolcall).toBe(true)
 })
 
@@ -227,7 +251,7 @@ test("usageFor never throws, caches one call for all providers, and retries afte
   resetQuotaCache()
 })
 
-test("each provider plugin exposes auth.usage once the proxy is up", async () => {
+test("the plugin is one provider, Central, with usage; stale per-route sign-ins are removed", async () => {
   const { createServer } = await import("node:http")
   const srv = createServer((_, res) => res.end("ok"))
   await new Promise((r) => srv.listen(0, "127.0.0.1", r))
@@ -235,11 +259,21 @@ test("each provider plugin exposes auth.usage once the proxy is up", async () =>
   await writeFile(join(dir, "config.json"), JSON.stringify({ proxy_secret: "s", proxy_port: srv.address().port }))
   process.env.CENTRAL_HOME = dir
   try {
-    const { centralAnthropic, centralOpenai, centralVertex } = await import("../index.js")
-    for (const make of [centralAnthropic, centralOpenai, centralVertex]) {
-      const hooks = await make({ client: { auth: { remove: async () => {}, set: async () => {} } } })
-      expect(typeof hooks.auth.usage).toBe("function")
-    }
+    const mod = await import("../index.js")
+    expect(Object.entries(mod).filter(([, v]) => typeof v === "function").map(([k]) => k)).toEqual(["central"])
+    const removed = []
+    const set = []
+    const hooks = await mod.central({ client: { auth: { remove: async (a) => removed.push(a.path.id), set: async (a) => set.push(a.path.id) } } })
+    expect(removed).toEqual(LEGACY_PROVIDER_IDS)
+    expect(set).toEqual(["central"])
+    expect(hooks.auth.provider).toBe("central")
+    expect(typeof hooks.auth.usage).toBe("function")
+    expect((await hooks.auth.loader()).baseURL).toBeUndefined()
+    expect(hooks.provider.id).toBe("central")
+    const cfg = {}
+    await hooks.config(cfg)
+    expect(Object.keys(cfg.provider)).toEqual(["central"])
+    expect(cfg.provider.central.name).toBe("Central")
   } finally {
     delete process.env.CENTRAL_HOME
     srv.close()
