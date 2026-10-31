@@ -100,3 +100,7 @@ export CENTRAL_HOME=$HOME/.jetbrains-central       # capture before HOME changes
 export HOME=$(mktemp -d) XDG_CONFIG_HOME=$HOME/.config MAGPIE_ADDR=127.0.0.1:0
 magpie plugin add ./
 ```
+
+## License
+
+[MIT](LICENSE)
