@@ -1,6 +1,6 @@
 {
   "name": "magpie-central-cli",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "license": "MIT",
   "description": "Magpie plugin exposing the models served by a locally running JetBrains Central CLI proxy (Anthropic, OpenAI, Vertex).",
   "type": "module",

@@ -9,7 +9,7 @@ Vertex. The plugin holds no JetBrains credentials; the proxy injects them.
 - Goal: reuse the user's existing `central login` session from inside Magpie.
 - Goal: zero config when the proxy runs on this machine.
 - Non-goal: logging in, starting or stopping the proxy, refreshing tokens.
-- Non-goal (v0.1): Bedrock and Ingrazzio routes, quota display, model discovery.
+- Non-goal (v0.1): Bedrock and Ingrazzio routes.
 
 ## How it works
 
@@ -115,6 +115,29 @@ central proxy (adds auth, forwards to JetBrains AI Platform).
 10. **Module exports.** Magpie treats every exported *function* as a plugin, so
    helpers live in `lib.js` and are exposed only as the `_internal` object.
 
+11. **Quota via `central quota --json`, not the quota API.** The quota API
+   takes Central's own bearer token (and needs refresh handling for workspace
+   and license sessions), which the plugin must not read (see 3). So each
+   provider's `auth.usage` hook runs the `central` binary (`CENTRAL_BIN`, `PATH`,
+   `~/.local/bin`) and maps its JSON to Magpie's usage result (docs:
+   usemagpie.ai/docs/zh/plugins#usage):
+
+   | Central field | Magpie window field |
+   |---|---|
+   | `usedDollars` / `maxDollars` (credits, despite the name) | `amount` / `limit`, `unit: "credits"`, `used` = percent |
+   | `refillNext` (ms) | `resetsAt`, and top-level `until` |
+   | `refillNext - refillLast` | `span` (seconds) |
+   | `licenseName`, `email` | `plan`, `user` |
+   | `topUpQuota` (when maximum > 0) | extra `Top-up` window, `aside: true` |
+   | `managed: true` | one `aside` window with text only, no numbers |
+
+   Unknown values are omitted, never sent as 0 (Magpie reads 0 as "none used").
+   The hook never throws: failures come back as `{error, windows: []}`. The three
+   providers share one cached (30 s) call. The cost is a runtime dependency on
+   the `central` binary being installed, which the proxy dependency already implies.
+   `resetsAt` is sent in milliseconds; the docs do not say whether seconds or
+   milliseconds are expected there (they accept both for `until`).
+
 ## Plugin options
 
 ```jsonc
@@ -153,6 +176,5 @@ central proxy (adds auth, forwards to JetBrains AI Platform).
 
 - Find a way to make Magpie's built-in Vertex probe pass (or confirm it is harmless).
 - Declare `auth.options` switches (Magpie 0.1.2411+) for what is now `options.exclude`.
-- `auth.usage`: surface central quota.
 - Bedrock route (`/bedrock/model/{id}/{op}`), once central exposes it for this agent.
 - Replace borrowed agent names with a registered `magpie` agent in central-cli.

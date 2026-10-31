@@ -2,6 +2,7 @@ import { homedir } from "node:os"
 import { join } from "node:path"
 import { readFile } from "node:fs/promises"
 import { existsSync, readdirSync } from "node:fs"
+import { execFile } from "node:child_process"
 
 export const DUMMY_API_KEY = "wire-proxy"
 export const DEFAULT_PORT = 19516
@@ -258,4 +259,110 @@ export async function centralStatus(dir = centralDir(), fetchImpl = fetch) {
     return { ready: false, reason: `proxy not reachable on 127.0.0.1:${proxy.port}; start it with \`central\`` }
   }
   return { ready: true, proxy }
+}
+
+// ---- Quota (auth.usage) -------------------------------------------------
+// The quota API needs Central's own bearer token, which this plugin never
+// reads. `central quota --json` already does the whole job (token refresh,
+// workspace and license sessions), so the plugin runs it and maps the result.
+
+// Where to find the `central` binary, best first: CENTRAL_BIN, PATH, then the
+// installer's default dir (~/.local/bin on every OS; central.exe on Windows).
+export function centralBinaries(env = process.env, platform = process.platform, home = userHome(env, platform)) {
+  const name = platform === "win32" ? "central.exe" : "central"
+  const list = []
+  if (env.CENTRAL_BIN) list.push(env.CENTRAL_BIN)
+  list.push(name)
+  const installed = join(home, ".local", "bin", name)
+  if (existsSync(installed)) list.push(installed)
+  return list
+}
+
+function execJSON(bin, args, timeout = 20000) {
+  return new Promise((resolve, reject) => {
+    execFile(bin, args, { timeout, windowsHide: true, maxBuffer: 1 << 20 }, (err, stdout, stderr) => {
+      if (err) return reject(Object.assign(err, { stderr: String(stderr ?? "") }))
+      resolve(String(stdout))
+    })
+  })
+}
+
+// Runs `central quota --json` and returns the parsed object. Throws an Error
+// whose message is fit to show the user.
+export async function fetchQuota(env = process.env, exec = execJSON) {
+  for (const bin of centralBinaries(env)) {
+    let out
+    try {
+      out = await exec(bin, ["quota", "--json"])
+    } catch (err) {
+      if (err.code === "ENOENT") {
+        continue
+      }
+      const detail = (err.stderr || err.message || "").trim().split("\n").pop()
+      throw new Error(`central quota failed: ${detail}`)
+    }
+    try {
+      return JSON.parse(out)
+    } catch {
+      throw new Error("central quota returned something that is not JSON; update Central CLI")
+    }
+  }
+  throw new Error(`central CLI not found; install it or set CENTRAL_BIN to its path`)
+}
+
+const num = (v) => {
+  const n = Number.parseFloat(v)
+  return Number.isFinite(n) ? n : undefined
+}
+
+// Maps `central quota --json` to Magpie's auth.usage result. Unknown values are
+// left out (Magpie reads 0 as "known, none used"). Credits are Central's unit.
+export function toUsage(q) {
+  const out = { plan: q.licenseName || undefined, user: q.email || undefined, windows: [] }
+  if (q.managed) {
+    out.windows.push({ name: "Limit", display: "Managed by your Central Server administrator", aside: true })
+    return out
+  }
+  const used = num(q.usedDollars)
+  const limit = num(q.maxDollars)
+  const last = Number(q.refillLast) || 0
+  const next = Number(q.refillNext) || 0
+  if (used !== undefined && limit !== undefined) {
+    const w = { name: "Quota", unit: "credits", amount: used, limit }
+    if (limit > 0) w.used = (used / limit) * 100
+    if (next > 0) w.resetsAt = next
+    if (last > 0 && next > last) w.span = Math.round((next - last) / 1000)
+    out.windows.push(w)
+    if (next > 0) out.until = next
+  }
+  const top = q.topUpQuota
+  const topMax = num(top?.maximum)
+  if (topMax > 0) {
+    // Top-up credits are an extra pool; show them without letting routing read them.
+    const cur = num(top.current)
+    out.windows.push({ name: "Top-up", unit: "credits", amount: cur, limit: topMax, used: cur !== undefined ? (cur / topMax) * 100 : undefined, aside: true })
+  }
+  return out
+}
+
+const QUOTA_TTL_MS = 30_000
+let quotaCache = { at: 0, promise: null }
+
+// Body of the `auth.usage` hook. The three providers share one account, so one
+// `central quota` call (cached briefly) serves all of them. Never throws:
+// Magpie shows `error` where the quota windows would be.
+export async function usageFor(env = process.env, exec = execJSON, now = Date.now) {
+  if (!quotaCache.promise || now() - quotaCache.at > QUOTA_TTL_MS) {
+    quotaCache = { at: now(), promise: fetchQuota(env, exec).then(toUsage) }
+  }
+  try {
+    return await quotaCache.promise
+  } catch (err) {
+    quotaCache = { at: 0, promise: null }
+    return { error: err.message, windows: [] }
+  }
+}
+
+export function resetQuotaCache() {
+  quotaCache = { at: 0, promise: null }
 }

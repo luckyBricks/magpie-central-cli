@@ -2,7 +2,7 @@ import { expect, test } from "bun:test"
 import { mkdtemp, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { listProviderModels, applyExclude, baseURL, buildProviders, centralDir, userHome, centralStatus, NEED_CENTRAL, fetchModels, modelMap, readProxy, CentralNotReadyError } from "../lib.js"
+import { centralBinaries, fetchQuota, toUsage, usageFor, resetQuotaCache, listProviderModels, applyExclude, baseURL, buildProviders, centralDir, userHome, centralStatus, NEED_CENTRAL, fetchModels, modelMap, readProxy, CentralNotReadyError } from "../lib.js"
 import { ICONS } from "../icons.js"
 
 const proxy = { port: 19516, secret: "abc123" }
@@ -160,4 +160,88 @@ test("home follows the platform: USERPROFILE on Windows, HOME elsewhere", () => 
 
 test("an unreadable data dir does not crash centralDir", () => {
   expect(centralDir({}, "/nonexistent-home-dir")).toBe(join("/nonexistent-home-dir", ".jetbrains-central"))
+})
+
+const QUOTA = {
+  email: "a@b.c", licenseName: "JetBrains Team", managed: false, usedDollars: "17.42", maxDollars: "1000.00",
+  tariffQuota: { current: "17.42", maximum: "1000.00", available: "982.58" },
+  topUpQuota: { current: "0.00", maximum: "0.00", available: "0.00" },
+  refillLast: 1790812800000, refillNext: 1793491199999,
+}
+
+test("toUsage maps central's quota to a Magpie usage window", () => {
+  const u = toUsage(QUOTA)
+  expect(u).toMatchObject({ plan: "JetBrains Team", user: "a@b.c", until: 1793491199999 })
+  expect(u.windows).toHaveLength(1)
+  expect(u.windows[0]).toMatchObject({ name: "Quota", unit: "credits", amount: 17.42, limit: 1000, resetsAt: 1793491199999, span: 2678400 })
+  expect(u.windows[0].used).toBeCloseTo(1.742, 5)
+})
+
+test("toUsage: top-up is an aside window; managed sessions have no numbers; unknowns are omitted", () => {
+  const withTop = toUsage({ ...QUOTA, topUpQuota: { current: "5", maximum: "20" } })
+  expect(withTop.windows[1]).toMatchObject({ name: "Top-up", aside: true, amount: 5, limit: 20, used: 25 })
+  const managed = toUsage({ managed: true })
+  expect(managed.windows).toEqual([{ name: "Limit", display: "Managed by your Central Server administrator", aside: true }])
+  const bare = toUsage({ usedDollars: "1", maxDollars: "0" })
+  expect("used" in bare.windows[0]).toBe(false)
+  expect("resetsAt" in bare.windows[0]).toBe(false)
+})
+
+test("centralBinaries: CENTRAL_BIN first, then PATH name, .exe on Windows", () => {
+  expect(centralBinaries({ CENTRAL_BIN: "/x/central" }, "darwin", "/nonexistent")).toEqual(["/x/central", "central"])
+  expect(centralBinaries({}, "win32", "C:\\nonexistent")).toEqual(["central.exe"])
+})
+
+test("fetchQuota tries the next binary on ENOENT, and explains failures", async () => {
+  const tried = []
+  const exec = async (bin) => {
+    tried.push(bin)
+    if (bin === "first") throw Object.assign(new Error("nope"), { code: "ENOENT" })
+    return JSON.stringify(QUOTA)
+  }
+  expect((await fetchQuota({ CENTRAL_BIN: "first" }, exec)).email).toBe("a@b.c")
+  expect(tried.slice(0, 2)).toEqual(["first", "central"])
+
+  const missing = async () => { throw Object.assign(new Error("x"), { code: "ENOENT" }) }
+  await expect(fetchQuota({}, missing)).rejects.toThrow(/central CLI not found.*CENTRAL_BIN/)
+  const failing = async () => { throw Object.assign(new Error("exit 1"), { stderr: "Error: fetch allowance: token expired — run 'central login' to fix\n" }) }
+  await expect(fetchQuota({}, failing)).rejects.toThrow(/token expired/)
+  await expect(fetchQuota({}, async () => "not json")).rejects.toThrow(/not JSON/)
+})
+
+test("usageFor never throws, caches one call for all providers, and retries after an error", async () => {
+  resetQuotaCache()
+  let calls = 0
+  const exec = async () => { calls++; return JSON.stringify(QUOTA) }
+  const [a, b, c] = await Promise.all([usageFor({}, exec), usageFor({}, exec), usageFor({}, exec)])
+  expect(calls).toBe(1)
+  expect(a.windows[0].name).toBe("Quota")
+  expect(b).toBe(a)
+  expect(c).toBe(a)
+
+  resetQuotaCache()
+  const bad = await usageFor({}, async () => { throw Object.assign(new Error("x"), { code: "ENOENT" }) })
+  expect(bad.windows).toEqual([])
+  expect(bad.error).toMatch(/not found/)
+  expect((await usageFor({}, exec)).windows).toHaveLength(1) // error was not cached
+  resetQuotaCache()
+})
+
+test("each provider plugin exposes auth.usage once the proxy is up", async () => {
+  const { createServer } = await import("node:http")
+  const srv = createServer((_, res) => res.end("ok"))
+  await new Promise((r) => srv.listen(0, "127.0.0.1", r))
+  const dir = await mkdtemp(join(tmpdir(), "central-"))
+  await writeFile(join(dir, "config.json"), JSON.stringify({ proxy_secret: "s", proxy_port: srv.address().port }))
+  process.env.CENTRAL_HOME = dir
+  try {
+    const { centralAnthropic, centralOpenai, centralVertex } = await import("../index.js")
+    for (const make of [centralAnthropic, centralOpenai, centralVertex]) {
+      const hooks = await make({ client: { auth: { remove: async () => {}, set: async () => {} } } })
+      expect(typeof hooks.auth.usage).toBe("function")
+    }
+  } finally {
+    delete process.env.CENTRAL_HOME
+    srv.close()
+  }
 })

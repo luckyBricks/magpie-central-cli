@@ -49,6 +49,10 @@ function make(route) {
         // Never prompted for in practice: the sign-in above is automatic.
         methods: [{ type: "api", label: "Local Central CLI proxy (no key needed)" }],
         loader: async () => ({ apiKey: DUMMY_API_KEY, baseURL: lib.baseURL(await readProxy(), route) }),
+        // Central's own allowance (credits used / limit, refill period), the same
+        // for all three providers. Magpie calls usage(getAuth, provider); neither
+        // is needed since the quota belongs to the Central login, not a key.
+        usage: () => lib.usageFor(),
       },
       // The skeleton only (static fallback models, no network): the live list
       // comes from the `provider.models` hook below.

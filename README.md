@@ -27,6 +27,23 @@ signed out with the hint "需要运行登录 central-cli"; start it and sign in 
 need to toggle the plugin. The proxy secret never leaves the machine, so the
 plugin folder is safe to copy anywhere; **do not** copy `~/.jetbrains-central`.
 
+## Quota
+
+Each provider reports Central's allowance to Magpie through its `auth.usage`
+hook: credits used / limit, percent, and when the period refills (shown on the
+provider's account card, in `magpie quota` and `GET /v1/magpie/quotas`). All
+three providers show the same figure, since it belongs to your Central login,
+not to an API key. It is the data behind `central quota`.
+
+The plugin gets it by running `central quota --json`, so the **`central` binary
+must be on the machine**. It is looked up in `CENTRAL_BIN`, then `PATH`, then
+`~/.local/bin` (`%USERPROFILE%\.local\bin\central.exe` on Windows), which is
+where the installer puts it. The plugin never reads Central's tokens. If the
+binary is missing or the login expired, the card shows the reason instead of
+numbers (e.g. "central CLI not found; install it or set CENTRAL_BIN").
+Workspace-managed limits you cannot query show "Managed by your Central Server
+administrator". Results are cached for 30 s.
+
 ## Install on another computer
 
 Build the package once (any OS with npm):
@@ -41,14 +58,14 @@ archive contains a `package/` directory, which is the plugin.
 macOS / Linux:
 
 ```sh
-mkdir magpie-central-cli && tar -xzf magpie-central-cli-0.2.1.tgz -C magpie-central-cli
+mkdir magpie-central-cli && tar -xzf magpie-central-cli-0.3.0.tgz -C magpie-central-cli
 magpie plugin add ./magpie-central-cli/package
 ```
 
 Windows (PowerShell; `tar` ships with Windows 10 1803+):
 
 ```powershell
-mkdir magpie-central-cli; tar -xzf magpie-central-cli-0.2.1.tgz -C magpie-central-cli
+mkdir magpie-central-cli; tar -xzf magpie-central-cli-0.3.0.tgz -C magpie-central-cli
 magpie plugin add .\magpie-central-cli\package
 ```
 
@@ -81,6 +98,8 @@ On PowerShell quote the JSON as `'{\"exclude\":[\"-eap$\"]}'` (or use a here-str
 
 | Symptom | Cause / fix |
 |---|---|
+| Quota card says "central CLI not found" | Install Central CLI, or set `CENTRAL_BIN` to the full path of `central` (`central.exe` on Windows) in the environment that starts Magpie. |
+| Quota card says "token expired" | Run `central login`. |
 | Providers show "需要运行登录 central-cli" | `central login`, start the proxy, then sign in again. `central status` should show it running. |
 | `cannot read …config.json` in the Magpie log | Central never ran on this user account, or `CENTRAL_HOME`/`HOME`/`USERPROFILE` differ between the shell that started Central and the one that started Magpie. |
 | `proxy not reachable on 127.0.0.1:<port>` | Proxy stopped, or Central uses another port: set `WIRE_PROXY_PORT` the same for Magpie, or fix `proxy_port`. |
